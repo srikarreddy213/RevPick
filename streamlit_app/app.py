@@ -83,12 +83,25 @@ def view_products():
 			ev_resp = q_ev.order("price").execute()
 			results.extend(ev_resp.data or [])
 
+		# Deduplicate by prod_id when present, otherwise by (brand,name,engine_cc,power_kw,price)
+		seen = set()
+		unique_results = []
+		for r in results:
+			if r.get("prod_id"):
+				key = ("id", r.get("prod_id"))
+			else:
+				key = ("spec", r.get("brand"), r.get("name"), r.get("engine_cc"), r.get("power_kw"), r.get("price"))
+			if key in seen:
+				continue
+			seen.add(key)
+			unique_results.append(r)
+
 		# Filter out columns not needed: prod_id, created_at, is_electric
 		display = []
-		for r in results:
+		for r in unique_results:
 			pruned = {k: v for k, v in r.items() if k not in {"prod_id", "created_at", "is_electric"}}
 			display.append(pruned)
-		st.success(f"Found {len(display)} matching bikes")
+		st.success(f"Found {len(display)} unique bikes")
 		st.dataframe(display, use_container_width=True)
 	except Exception as e:
 		st.error(f"Search failed: {e}")
