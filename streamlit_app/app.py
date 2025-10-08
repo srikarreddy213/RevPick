@@ -14,9 +14,9 @@ def init_connection():
 		# Lazy import to avoid hard dependency if user hasn't installed yet
 		from supabase import create_client, Client
 		url: Optional[str] = st.secrets.get("SUPABASE_URL")
-		key: Optional[str] = st.secrets.get("SUPABASE_ANON_KEY")
+		key: Optional[str] = st.secrets.get("SUPABASE_ANON_KEY") or st.secrets.get("SUPABASE_KEY")
 		if not url or not key:
-			st.info("Add SUPABASE_URL and SUPABASE_ANON_KEY to .streamlit/secrets.toml to enable live data.")
+			st.info("Add SUPABASE_URL and SUPABASE_ANON_KEY (or SUPABASE_KEY) to .streamlit/secrets.toml to enable live data.")
 			return None
 		return create_client(url, key)
 	except Exception as exc:
@@ -28,76 +28,65 @@ supabase = init_connection()
 
 
 def view_products():
-	st.header("Products")
-	col_filters = st.columns(4)
-	with col_filters[0]:
-		brand_filter = st.text_input("Brand contains")
-	with col_filters[1]:
-		name_filter = st.text_input("Name contains")
-	with col_filters[2]:
-		is_ev = st.selectbox("Type", ["Any", "ICE", "EV"])
-	with col_filters[3]:
-		max_price = st.number_input("Max price", min_value=0, value=0)
+	st.header("Find Bikes")
 
-	if supabase:
-		query = supabase.table("products").select("*")
-		if brand_filter:
-			query = query.ilike("brand", f"%{brand_filter}%")
-		if name_filter:
-			query = query.ilike("name", f"%{name_filter}%")
-		if is_ev == "EV":
-			query = query.eq("is_electric", True)
-		elif is_ev == "ICE":
-			query = query.eq("is_electric", False)
+	with st.form("finder_form", clear_on_submit=False):
+		col1, col2, col3 = st.columns(3)
+		with col1:
+			type_choice = st.selectbox("Type", ["Any", "ICE", "EV"], index=0)
+		with col2:
+			min_price = st.number_input("Min price", min_value=0, value=0, step=1000)
+		with col3:
+			max_price = st.number_input("Max price", min_value=0, value=0, step=1000)
+
+		col4, col5 = st.columns(2)
+		with col4:
+			min_cc = st.number_input("Min CC (ICE)", min_value=0, value=0, step=50)
+		with col5:
+			max_cc = st.number_input("Max CC (ICE)", min_value=0, value=0, step=50)
+
+		submitted = st.form_submit_button("Search")
+
+	if not submitted:
+		st.info("Set your filters and press Search.")
+		return
+
+	if not supabase:
+		st.warning("Live data unavailable. Configure Supabase secrets to fetch results.")
+		st.dataframe([], use_container_width=True)
+		return
+
+	results = []
+
+	# Price filters helper
+	def apply_price_filters(q):
+		if min_price and min_price > 0:
+			q = q.gte("price", min_price)
 		if max_price and max_price > 0:
-			query = query.lte("price", max_price)
-		resp = query.order("created_at", desc=True).execute()
-		data = resp.data or []
-		st.dataframe(data, use_container_width=True)
-	else:
-		st.info("Live data unavailable. Showing sample columns.")
-		st.dataframe([
-			{"name": "Sample Bike", "brand": "BrandX", "price": 100000, "is_electric": False},
-		])
+			q = q.lte("price", max_price)
+		return q
 
-	with st.expander("Add new product"):
-		with st.form("add_product_form"):
-			name = st.text_input("Name")
-			brand = st.text_input("Brand")
-			is_electric = st.checkbox("Electric (EV)")
-			engine_cc = None
-			power_kw = None
-			if is_electric:
-				power_kw = st.number_input("Power (kW)", min_value=0.0, step=0.1)
-			else:
-				engine_cc = st.number_input("Engine CC", min_value=1, step=1)
-			price = st.number_input("Price", min_value=0, step=1000)
-			stock = st.number_input("Stock", min_value=0, step=1)
-			category_id = st.text_input("Category ID (optional)")
-			submitted = st.form_submit_button("Create")
-			if submitted:
-				if not supabase:
-					st.error("Configure Supabase to insert.")
-				else:
-					payload = {
-						"name": name,
-						"brand": brand,
-						"price": price,
-						"stock": stock,
-						"category_id": category_id or None,
-						"is_electric": bool(is_electric),
-						"engine_cc": int(engine_cc) if not is_electric and engine_cc else None,
-						"power_kw": float(power_kw) if is_electric and power_kw is not None else None,
-					}
-					try:
-						res = supabase.table("products").insert(payload).execute()
-						if res.data:
-							st.success("Product created.")
-							st.experimental_rerun()
-						else:
-							st.warning("No data returned.")
-					except Exception as e:
-						st.error(f"Insert failed: {e}")
+	try:
+		if type_choice in ("Any", "ICE"):
+			q_ice = supabase.table("products").select("*").eq("is_electric", False)
+			if min_cc and min_cc > 0:
+				q_ice = q_ice.gte("engine_cc", min_cc)
+			if max_cc and max_cc > 0:
+				q_ice = q_ice.lte("engine_cc", max_cc)
+			q_ice = apply_price_filters(q_ice)
+			ice_resp = q_ice.order("price").execute()
+			results.extend(ice_resp.data or [])
+
+		if type_choice in ("Any", "EV"):
+			q_ev = supabase.table("products").select("*").eq("is_electric", True)
+			q_ev = apply_price_filters(q_ev)
+			ev_resp = q_ev.order("price").execute()
+			results.extend(ev_resp.data or [])
+
+		st.success(f"Found {len(results)} matching bikes")
+		st.dataframe(results, use_container_width=True)
+	except Exception as e:
+		st.error(f"Search failed: {e}")
 
 
 def view_customers():
