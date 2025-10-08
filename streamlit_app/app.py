@@ -83,8 +83,13 @@ def view_products():
 			ev_resp = q_ev.order("price").execute()
 			results.extend(ev_resp.data or [])
 
-		st.success(f"Found {len(results)} matching bikes")
-		st.dataframe(results, use_container_width=True)
+		# Filter out columns not needed: prod_id, created_at, is_electric
+		display = []
+		for r in results:
+			pruned = {k: v for k, v in r.items() if k not in {"prod_id", "created_at", "is_electric"}}
+			display.append(pruned)
+		st.success(f"Found {len(display)} matching bikes")
+		st.dataframe(display, use_container_width=True)
 	except Exception as e:
 		st.error(f"Search failed: {e}")
 
@@ -159,17 +164,8 @@ def view_suggestions():
 			)
 
 
-PAGES = {
-	"Products": view_products,
-	"Customers": view_customers,
-	"Suggestions": view_suggestions,
-}
-
-
 def main():
-	st.sidebar.title("RevPick")
-	page = st.sidebar.radio("Go to", list(PAGES.keys()))
-	PAGES[page]()
+	view_products()
 
 
 if __name__ == "__main__":
